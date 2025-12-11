@@ -2,11 +2,11 @@ name: Build Windows Exe
 
 on:
   push:
-    branches: [ "main", "master" ]  # main または master ブランチへのプッシュで発動
+    branches: [ "main", "master" ]
 
 jobs:
   build:
-    runs-on: windows-latest  # Windows環境でビルドを実行
+    runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
         pip install gradio requests Pillow deep-translator pyinstaller
 
     - name: Build with PyInstaller
-      # ユーザー指定のコマンドを実行
+      # --onedir (フォルダモード) でビルド
       run: |
         pyinstaller --name "FggArtAssist" --onedir --windowed --collect-all gradio --collect-all gradio_client --collect-all deep_translator --collect-all safehttpx --collect-all groovy --collect-all huggingface_hub --collect-all tqdm --collect-all typing_extensions --collect-all requests --collect-all urllib3 --exclude-module cv2 --exclude-module opencv-python fgg_art_assist.py
 
@@ -30,4 +30,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: FggArtAssist-Windows
-        path: dist/FggArtAssist.exe
+        path: dist/FggArtAssist
