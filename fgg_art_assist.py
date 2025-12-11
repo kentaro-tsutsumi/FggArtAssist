@@ -54,6 +54,26 @@ def find_available_port(start_port):
                 port += 1
     return start_port
 
+def get_pid_by_port(port):
+    """指定されたポートを使用しているプロセスのPIDを特定する"""
+    try:
+        if platform.system() == "Windows":
+            cmd = f"netstat -ano | findstr :{port}"
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            result = subprocess.check_output(cmd, shell=True, startupinfo=startupinfo).decode()
+            for line in result.splitlines():
+                if "LISTENING" in line:
+                    return int(line.split()[-1])
+        else:
+            cmd = f"lsof -i :{port} -t"
+            result = subprocess.check_output(cmd, shell=True).decode()
+            if result.strip():
+                return int(result.strip().split('\n')[0])
+    except:
+        pass
+    return None
+
 # ==========================================
 # 📦 ライブラリ読み込み
 # ==========================================
@@ -181,6 +201,7 @@ try:
     LAST_BATCH_INDEX = -1    # 画像が切り替わったか判定用
     LAST_PROGRESS = 0.0      # 直前の進捗％（逆行防止用）
     LAST_LOGS_TEXT = None
+    SD_SERVER_PROCESS = None  # 起動したサーバーのプロセス情報を保持
 
     # ==========================================
     # 🛠️ ユーティリティ関数
@@ -401,12 +422,17 @@ try:
             style_out = """<style>#btn_cleanup, #btn_face_fix { background: linear-gradient(to bottom, #4f46e5, #4338ca) !important; pointer-events: auto !important; }</style>"""
 
         btn_server_update = gr.update(interactive=False, value="🚀 起動中...") if STARTING else (gr.update(interactive=False, value="✅ 起動済み") if "起動中" in status else gr.update(interactive=True, value="🚀 サーバー起動"))
+
+        is_running = ("起動中" in status)
+        btn_stop_server_update = gr.update(interactive=is_running)
+        
         logs_out = logs if LAST_LOGS_TEXT != logs else gr.update()
         if logs_out != gr.update(): LAST_LOGS_TEXT = logs
-        
+
         return (
             status, CURRENT_SD_URL, logs_out, 
             btn_server_update, 
+            btn_stop_server_update, 
             btn_cleanup_update, btn_stop_update, 
             btn_face_fix_update, btn_stop_face_update, 
             style_out
@@ -435,17 +461,21 @@ try:
             env["GRADIO_BROWSER"] = "false"
             
             if platform.system() == "Windows":
+                # cmd = ... (既存のコード)
                 cmd = ["webui-user.bat", "--api", "--nowebui", "--port", str(SD_PORT)]
             else:
                 cmd = ["bash", "webui.sh", "--api", "--nowebui", "--port", str(SD_PORT)]
-
+            
             if SD_BOOT_ARGS and SD_BOOT_ARGS.strip():
                 try:
                     cmd.extend(shlex.split(SD_BOOT_ARGS))
                 except: pass
             
-            subprocess.Popen(cmd, cwd=SD_WEBUI_PATH, env=env)
-            add_log("サーバー起動中...")
+            # プロセスをグローバル変数に保存
+            proc = subprocess.Popen(cmd, cwd=SD_WEBUI_PATH, env=env)
+            SD_SERVER_PROCESS = proc
+            
+            add_log(f"サーバー起動中... (PID: {proc.pid})")
 
             STARTING = True
             def _wait_for_start(timeout=120):
@@ -465,6 +495,66 @@ try:
         except Exception as e:
             add_log(f"起動エラー: {e}")
             return (f"エラー: {str(e)}", CURRENT_SD_URL, get_logs_text(), gr.update(interactive=True, value="🚀 サーバー起動"), *def_ret[4:])
+
+    def stop_sd_server():
+        global SD_SERVER_PROCESS, STARTING
+        
+        target_pid = None
+        
+        # 1. ツールが覚えているPIDがあるか確認
+        if SD_SERVER_PROCESS is not None:
+            target_pid = SD_SERVER_PROCESS.pid
+        
+        # 2. なければポート番号からPIDを探す
+        if target_pid is None:
+            target_pid = get_pid_by_port(SD_PORT)
+
+        if target_pid is None:
+            return "⚠️ 停止可能なプロセスが見つかりませんでした"
+
+        add_log(f"🛑 サーバー停止コマンドを実行します... (PID: {target_pid})")
+        
+        try:
+            if platform.system() == "Windows":
+                # 【修正】subprocess.runを使い、戻り値（成功/失敗）をチェックする
+                # capture_output=True でエラーメッセージを捕まえる
+                # text=True で文字列として扱う
+                res = subprocess.run(
+                    ['taskkill', '/F', '/T', '/PID', str(target_pid)], 
+                    capture_output=True, 
+                    text=True
+                )
+                
+                # returncode が 0 以外なら失敗
+                if res.returncode != 0:
+                    # エラーメッセージ（「アクセスが拒否されました」など）を取得
+                    err_msg = res.stderr.strip()
+                    if not err_msg: err_msg = "不明なエラー（権限不足の可能性があります）"
+                    
+                    add_log(f"❌ 停止失敗: {err_msg}")
+                    return f"停止失敗: {err_msg}"
+                    
+            else:
+                # Mac/Linux: 権限がないとPermissionErrorが発生してexceptに飛ぶ
+                os.kill(target_pid, 15) # SIGTERM
+            
+            # ここまで来たら成功
+            SD_SERVER_PROCESS = None
+            STARTING = False
+            add_log("✅ サーバーを停止しました")
+            return "停止しました"
+
+        except PermissionError:
+            add_log("❌ 停止失敗: 権限がありません（管理者として実行する必要があります）")
+            return "停止失敗: 権限不足"
+        except ProcessLookupError:
+            add_log("⚠️ プロセスは既に存在しません")
+            SD_SERVER_PROCESS = None
+            STARTING = False
+            return "既に停止済み"
+        except Exception as e:
+            add_log(f"❌ 停止エラー: {e}")
+            return f"停止エラー: {e}"
 
     def set_model_if_needed():
         try:
@@ -821,7 +911,7 @@ try:
     """
 
     with gr.Blocks(title="FgG ArtAssist", css=custom_css, theme=gr.themes.Soft()) as demo:
-        gr.Markdown("### 🎨 FgG ArtAssist - イラスト制作支援ツール β版")
+        gr.Markdown("### 🎨 FgG ArtAssist - イラスト制作支援ツール v1.0β")
 
         with gr.Column(elem_id="sd_server_frame"):
             btn_settings = gr.Button("⚙️", elem_id="btn_settings")
@@ -833,9 +923,18 @@ try:
                         sd_url_display = gr.Textbox(label="接続先", value=CURRENT_SD_URL, interactive=False)
                     with gr.Row():
                         btn_start_server = gr.Button("🚀 サーバー起動", variant="primary", elem_classes="server-btn")
-                        btn_refresh = gr.Button("🔄 更新", variant="secondary", elem_classes="server-btn")
+                        btn_stop_server = gr.Button("🛑 サーバー停止", variant="stop", elem_classes="server-btn", interactive=False)
                 with gr.Column(scale=3):
                     logs_display = gr.Textbox(label="ログ", value=get_logs_text(), lines=5, max_lines=5, interactive=False, autoscroll=True)
+
+        with gr.Group(visible=False) as modal_server_stop:
+            with gr.Group(elem_classes="modal-container"):
+                with gr.Column(elem_classes="modal-content"):
+                    gr.Markdown("### 🛑 サーバーを停止しますか？")
+                    gr.Markdown("Stable Diffusion サーバーを終了します。\n保存されていない作業は失われます。")
+                    with gr.Row():
+                        btn_server_stop_yes = gr.Button("はい、停止します", variant="stop")
+                        btn_server_stop_no = gr.Button("キャンセル", variant="secondary")
 
         with gr.Group(visible=False) as modal_settings:
             with gr.Group(elem_classes="modal-container"):
@@ -1006,9 +1105,11 @@ try:
 
         style_default = gr.HTML(visible=False)
         timer = gr.Timer(3.0)
-        
+
         poll_outputs = [
-            status_display, sd_url_display, logs_display, btn_start_server, 
+            status_display, sd_url_display, logs_display, 
+            btn_start_server, 
+            btn_stop_server, # ← ここを btn_refresh から btn_stop_server に変更
             btn_cleanup, btn_stop_trigger, 
             btn_face_fix, btn_stop_trigger_face, 
             style_default
@@ -1016,7 +1117,12 @@ try:
         
         timer.tick(fn=poll_status, outputs=poll_outputs)
         btn_start_server.click(fn=start_sd_server, outputs=poll_outputs)
-        btn_refresh.click(fn=poll_status, outputs=poll_outputs)
+        
+        # 停止ボタンのイベント
+        btn_stop_server.click(lambda: gr.update(visible=True), None, modal_server_stop)
+        btn_server_stop_no.click(lambda: gr.update(visible=False), None, modal_server_stop)
+        btn_server_stop_yes.click(fn=stop_sd_server, outputs=None).then(lambda: gr.update(visible=False), None, modal_server_stop)
+
 
     if __name__ == "__main__":
         print("🚀 アプリを起動中...")
