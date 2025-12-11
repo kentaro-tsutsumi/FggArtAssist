@@ -15,9 +15,9 @@ import socket
 # ==========================================
 # 🛑 ログ出力の強制設定
 # ==========================================
-if hasattr(sys.stdout, 'reconfigure'):
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(line_buffering=True)
-if hasattr(sys.stderr, 'reconfigure'):
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(line_buffering=True)
 
 print("🚀 アプリケーションの初期化を開始します...")
