@@ -24,7 +24,7 @@ jobs:
     - name: Build with PyInstaller
       # --onedir (フォルダモード) でビルド
       run: |
-        pyinstaller --name "FggArtAssist" --onedir --windowed --collect-all gradio --collect-all gradio_client --collect-all deep_translator --collect-all safehttpx --collect-all groovy --collect-all huggingface_hub --collect-all tqdm --collect-all typing_extensions --collect-all requests --collect-all urllib3 --exclude-module cv2 --exclude-module opencv-python fgg_art_assist.py
+        pyinstaller --name "FggArtAssist" --onedir --collect-all gradio --collect-all gradio_client --collect-all deep_translator --collect-all safehttpx --collect-all groovy --collect-all huggingface_hub --collect-all tqdm --collect-all typing_extensions --collect-all requests --collect-all urllib3 --exclude-module cv2 --exclude-module opencv-python fgg_art_assist.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
