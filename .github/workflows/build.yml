@@ -24,7 +24,7 @@ jobs:
     - name: Build with PyInstaller
       # ユーザー指定のコマンドを実行
       run: |
-        pyinstaller --name "FggArtAssist" --onefile --collect-all gradio --collect-all gradio_client --collect-all deep_translator --collect-all safehttpx --exclude-module cv2 --exclude-module opencv-python art_assist.py
+        pyinstaller --name "FggArtAssist" --onefile --collect-all gradio --collect-all gradio_client --collect-all deep_translator --collect-all safehttpx --exclude-module cv2 --exclude-module opencv-python fgg_art_assist.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
