@@ -880,7 +880,7 @@ try:
             with gr.Group(elem_classes="modal-container"):
                 with gr.Column(elem_classes="modal-content"):
                     gr.Markdown("### 📝 生成パラメータ（PNG info）")
-                    output_info_1 = gr.Textbox(label="", lines=10, interactive=False, show_copy_button=True, container=False)
+                    output_info_1 = gr.Textbox(label="", lines=10, interactive=False, container=False)
                     btn_close_modal_1 = gr.Button("閉じる", variant="secondary")
         
         with gr.Tabs():
