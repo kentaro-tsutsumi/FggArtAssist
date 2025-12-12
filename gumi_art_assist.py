@@ -206,10 +206,10 @@ try:
     APP_PORT = find_available_port(8000)
     print(f"ℹ️ アプリケーションのポートを {APP_PORT} に設定しました")
 
-    TARGET_MODEL_KEYWORD = "waiNSFWIllustrious" 
+    TARGET_MODEL_CANDIDATES = ["waiIllustriousSDXL", "waiNSFWIllustrious"]
     SYSTEM_LOGS = []
     IGNORED_LOGS = ["画像を保存しました"]
-    API_TIMEOUT = 600
+    API_TIMEOUT = 3000
     STARTING = False
     
     # 実行中のタスク状態管理
@@ -640,24 +640,71 @@ try:
 
     def set_model_if_needed():
         try:
-            opt_res = requests.get(f"{CURRENT_SD_URL}/sdapi/v1/options", proxies={"http": None, "https": None})
-            current_model = opt_res.json().get("sd_model_checkpoint", "")
-            if TARGET_MODEL_KEYWORD in current_model: return True
+            # === 関数内関数: モデルリストから候補を探す ===
+            def find_best_target(model_list):
+                for candidate in TARGET_MODEL_CANDIDATES:
+                    found = next((m["title"] for m in model_list if candidate in m["title"] or candidate in m["model_name"]), None)
+                    if found:
+                        return found, candidate
+                return None, None
+            # ============================================
+
+            add_log("🔍 モデル一覧を取得して確認します...")
             
+            # 1. サーバーにある全モデル一覧を取得
             models_res = requests.get(f"{CURRENT_SD_URL}/sdapi/v1/sd-models", proxies={"http": None, "https": None})
-            target = next((m["title"] for m in models_res.json() if TARGET_MODEL_KEYWORD in m["title"] or TARGET_MODEL_KEYWORD in m["model_name"]), None)
+            if models_res.status_code != 200:
+                raise gr.Error(f"APIエラー: モデル一覧取得失敗 (Status {models_res.status_code})")
             
-            if target:
-                requests.post(f"{CURRENT_SD_URL}/sdapi/v1/options", json={"sd_model_checkpoint": target}, proxies={"http": None, "https": None})
-                add_log(f"モデルを変更しました: {target}")
-                return True
-            else:
-                err_msg = f"❌ エラー: モデル '{TARGET_MODEL_KEYWORD}' が見つかりません。\nCivitai等からダウンロードして models/Stable-diffusion フォルダに入れてください。"
+            all_models = models_res.json()
+            
+            target_model_title, hit_keyword = find_best_target(all_models)
+
+            # 2. 見つからなければリフレッシュして再取得
+            if not target_model_title:
+                add_log("⚠️ 優先モデルが見つかりません。リフレッシュして再取得します...")
+                requests.post(f"{CURRENT_SD_URL}/sdapi/v1/refresh-checkpoints", proxies={"http": None, "https": None})
+                
+                models_res = requests.get(f"{CURRENT_SD_URL}/sdapi/v1/sd-models", proxies={"http": None, "https": None})
+                all_models = models_res.json()
+                
+                # リフレッシュ後も一応出す
+                print("\n【デバッグ】リフレッシュ後のモデル一覧:")
+                for m in all_models:
+                    print(f"・{m['title']}")
+
+                target_model_title, hit_keyword = find_best_target(all_models)
+
+            # 3. それでも無ければエラー
+            if not target_model_title:
+                candidates_str = ", ".join(TARGET_MODEL_CANDIDATES)
+                err_msg = f"❌ 指定モデルが見つかりません。\n探した名前: {candidates_str}\n※コンソールのログを確認してください"
                 add_log(err_msg)
                 raise gr.Error(err_msg)
+
+            # 4. モデル変更判定
+            opt_res = requests.get(f"{CURRENT_SD_URL}/sdapi/v1/options", proxies={"http": None, "https": None})
+            current_model_title = opt_res.json().get("sd_model_checkpoint", "")
+
+            add_log(f"ℹ️ 現在のモデル: {current_model_title}")
+            add_log(f"🎯 目標のモデル: {target_model_title}")
+
+            if target_model_title == current_model_title:
+                 return True
+            
+            # 5. 切り替え
+            add_log(f"モデルを切り替えます...")
+            payload = {"sd_model_checkpoint": target_model_title}
+            requests.post(f"{CURRENT_SD_URL}/sdapi/v1/options", json=payload, proxies={"http": None, "https": None})
+            
+            time.sleep(1)
+            add_log(f"✅ モデル変更完了")
+            return True
+
         except Exception as e:
-            if isinstance(e, gr.Error): raise e
-            return False
+            error_text = f"❌ モデル確認中にエラー: {e}"
+            add_log(error_text)
+            raise gr.Error(error_text)
 
     def cleanup_sketch(image_path, hint_text, batch_count, denoise_label, ad_mode, seed):
         global CURRENT_TASK, CURRENT_BATCH_INDEX, TOTAL_BATCH_COUNT, EXPECTED_JOB_COUNT, LAST_BATCH_INDEX, LAST_PROGRESS
@@ -993,7 +1040,7 @@ try:
     """
 
     with gr.Blocks(title="gumi ArtAssist", css=custom_css, theme=gr.themes.Soft()) as demo:
-        gr.Markdown("### 🎨 gumi ArtAssist - イラスト制作支援ツール v1.0.1β")
+        gr.Markdown("### 🎨 gumi ArtAssist - イラスト制作支援ツール v1.0.2β")
 
         with gr.Column(elem_id="sd_server_frame"):
             btn_settings = gr.Button("⚙️", elem_id="btn_settings")
@@ -1078,7 +1125,7 @@ try:
                             slider_batch = gr.Slider(minimum=1, maximum=10, step=1, value=1, label="生成枚数（Batch count）")
                             with gr.Row(elem_classes="settings-row"):
                                 radio_strength = gr.Radio(choices=["弱", "中", "強"], value="中", label="変更度合い（Denoising strength）", interactive=True)
-                            radio_ad = gr.Radio(choices=["なし", "顔のみ", "手のみ", "顔と手"], value="なし", label="顔と手の補正 (ADetailer)")
+                            radio_ad = gr.Radio(choices=["なし", "顔のみ", "手のみ", "顔と手"], value="なし", label="顔と手の補正（ADetailer）")
                             input_seed = gr.Number(label="乱数（Seed）", value=-1, precision=0)
                     
                     with gr.Column(scale=1, min_width=100, elem_classes="control-panel"):
@@ -1198,13 +1245,21 @@ try:
         ]
         
         timer.tick(fn=poll_status, outputs=poll_outputs)
+        demo.load(fn=poll_status, outputs=poll_outputs)
         btn_start_server.click(fn=start_sd_server, outputs=poll_outputs)
         
         # 停止ボタンのイベント
         btn_stop_server.click(lambda: gr.update(visible=True), None, modal_server_stop)
         btn_server_stop_no.click(lambda: gr.update(visible=False), None, modal_server_stop)
-        btn_server_stop_yes.click(fn=stop_sd_server, outputs=None).then(lambda: gr.update(visible=False), None, modal_server_stop)
-
+        btn_server_stop_yes.click(
+            fn=stop_sd_server, 
+            outputs=None
+        ).then(
+            lambda: gr.update(visible=False), None, modal_server_stop
+        ).then(
+            fn=poll_status, 
+            outputs=poll_outputs
+        )
 
     if __name__ == "__main__":
         print("🚀 アプリを起動中...")
