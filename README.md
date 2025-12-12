@@ -1,6 +1,6 @@
-# 🎨 FgG ArtAssist - イラスト制作支援ツール (β版)
+# 🎨 gumi ArtAssist - イラスト制作支援ツール (β版)
 
-**FgG ArtAssist** は、Stable Diffusion WebUI (Automatic1111) のAPIを利用して、イラスト制作のワークフローを効率化するためのデスクトップアプリケーションです。
+**gumi ArtAssist** は、Stable Diffusion WebUI (Automatic1111) のAPIを利用して、イラスト制作のワークフローを効率化するためのデスクトップアプリケーションです。
 Gradioを用いたシンプルなUIで、ラフ画の清書や、顔・手の修正を直感的に行うことができます。
 
 ## ✨ 主な機能

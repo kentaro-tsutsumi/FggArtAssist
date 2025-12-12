@@ -101,12 +101,31 @@ try:
     # ==========================================
     # ⚙️ 設定ファイル管理 (Config)
     # ==========================================
-    CONFIG_FILE_PATH = os.path.join(os.path.expanduser("~"), ".artassist_config.json")
+    # 実行ファイル(exe)またはスクリプト(py)があるフォルダを特定する
+    if getattr(sys, 'frozen', False):
+        # exe化されている場合
+        base_path = os.path.dirname(sys.executable)
+    else:
+        # pythonスクリプトとして実行している場合
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    # アプリと同じ場所に保存する（隠しファイルにする必要がないのでドットを外します）
+    CONFIG_FILE_PATH = os.path.join(base_path, "gumi_art_assist_config.json")
     
+    if platform.system() == "Windows":
+        # Windowsの一般的なパス（例）
+        default_webui_path = "C:\\stable-diffusion-webui"
+    else:
+        # Mac/Linuxのデフォルトパス
+        default_webui_path = "/Applications/Data/Packages/Stable Diffusion WebUI"
+    
+    # 環境変数が設定されていればそれを最優先、なければOSごとのデフォルトを使う
+    final_webui_path = os.environ.get("SD_WEBUI_PATH", default_webui_path)
+
     DEFAULT_SETTINGS = {
         "sd_host": "http://127.0.0.1",
         "sd_port": "7860",
-        "sd_webui_path": os.environ.get("SD_WEBUI_PATH", "/Applications/Data/Packages/Stable Diffusion WebUI"),
+        "sd_webui_path": final_webui_path, # ← ここに変数をセット
         "boot_args": "",
         "output_dir": ""
     }
@@ -170,7 +189,7 @@ try:
         if settings["output_dir"]:
             BASE_OUTPUT_DIR = settings["output_dir"]
         else:
-            BASE_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "ArtAssist_Output")
+            BASE_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "gumiArtAssist_Output")
 
     CURRENT_SETTINGS = load_settings()
     update_globals(CURRENT_SETTINGS)
@@ -439,17 +458,48 @@ try:
         )
 
     def start_sd_server():
-        global STARTING
-        def_ret = (
-            gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
-        )
+        global STARTING, SD_SERVER_PROCESS
+        
+        # 画面の更新対象は全部で10個あります。
+        # 1. status_display
+        # 2. sd_url_display
+        # 3. logs_display
+        # 4. btn_start_server
+        # 5. btn_stop_server (← 今回増えたやつ)
+        # 6. btn_cleanup
+        # 7. btn_stop_trigger
+        # 8. btn_face_fix
+        # 9. btn_stop_trigger_face
+        # 10. style_default
+
+        # 何も変更しない場合のデフォルト値（gr.update()）
+        no_update = gr.update()
 
         if not SD_WEBUI_PATH or not os.path.exists(SD_WEBUI_PATH):
             add_log(f"エラー: WebUIパス不明: {SD_WEBUI_PATH}")
-            return ("⚠️ パスエラー", CURRENT_SD_URL, get_logs_text(), gr.update(interactive=True, value="🚀 サーバー起動"), *def_ret[4:])
+            # エラー時も必ず10個返す
+            return (
+                "⚠️ パスエラー",              # 1
+                CURRENT_SD_URL,              # 2
+                get_logs_text(),             # 3
+                gr.update(interactive=True, value="🚀 サーバー起動"), # 4
+                no_update, # 5
+                no_update, # 6
+                no_update, # 7
+                no_update, # 8
+                no_update, # 9
+                no_update  # 10
+            )
 
         if STARTING or "起動中" in check_server_status():
-            return ("処理中", CURRENT_SD_URL, get_logs_text(), gr.update(), *def_ret[4:])
+            # 処理中も10個返す
+            return (
+                "処理中", 
+                CURRENT_SD_URL, 
+                get_logs_text(), 
+                gr.update(), 
+                no_update, no_update, no_update, no_update, no_update, no_update
+            )
 
         try:
             ensure_adetailer_models()
@@ -461,18 +511,16 @@ try:
             env["GRADIO_BROWSER"] = "false"
             
             if platform.system() == "Windows":
-                # cmd = ... (既存のコード)
                 cmd = ["webui-user.bat", "--api", "--nowebui", "--port", str(SD_PORT)]
             else:
                 cmd = ["bash", "webui.sh", "--api", "--nowebui", "--port", str(SD_PORT)]
-            
+
             if SD_BOOT_ARGS and SD_BOOT_ARGS.strip():
                 try:
                     cmd.extend(shlex.split(SD_BOOT_ARGS))
                 except: pass
             
-            # プロセスをグローバル変数に保存
-            proc = subprocess.Popen(cmd, cwd=SD_WEBUI_PATH, env=env)
+            proc = subprocess.Popen(cmd, cwd=SD_WEBUI_PATH, env=env, start_new_session=True)
             SD_SERVER_PROCESS = proc
             
             add_log(f"サーバー起動中... (PID: {proc.pid})")
@@ -491,23 +539,47 @@ try:
                 add_log("タイムアウト")
 
             threading.Thread(target=_wait_for_start, daemon=True).start()
-            return ("🚀 起動中...", CURRENT_SD_URL, get_logs_text(), gr.update(interactive=False, value="🚀 起動中..."), *def_ret[4:])
+            
+            # 正常起動開始時も必ず10個返す
+            return (
+                "🚀 起動中...",              # 1. 状態
+                CURRENT_SD_URL,              # 2. URL
+                get_logs_text(),             # 3. ログ
+                gr.update(interactive=False, value="🚀 起動中..."), # 4. 起動ボタン
+                gr.update(interactive=False),# 5. 停止ボタン（まだ起動完了してないので無効のまま）
+                no_update,                   # 6
+                no_update,                   # 7
+                no_update,                   # 8
+                no_update,                   # 9
+                no_update                    # 10
+            )
+            
         except Exception as e:
             add_log(f"起動エラー: {e}")
-            return (f"エラー: {str(e)}", CURRENT_SD_URL, get_logs_text(), gr.update(interactive=True, value="🚀 サーバー起動"), *def_ret[4:])
+            # 例外発生時も必ず10個返す
+            return (
+                f"エラー: {str(e)}", 
+                CURRENT_SD_URL, 
+                get_logs_text(), 
+                gr.update(interactive=True, value="🚀 サーバー起動"), 
+                no_update, no_update, no_update, no_update, no_update, no_update
+            )
 
+    # ==========================================
+    # 🛑 サーバー停止関数
+    # ==========================================
     def stop_sd_server():
         global SD_SERVER_PROCESS, STARTING
+        import signal
         
         target_pid = None
         
-        # 1. ツールが覚えているPIDがあるか確認
-        if SD_SERVER_PROCESS is not None:
+        # 1. ポートを掴んでいるプロセス（Python本体）を探す
+        port_pid = get_pid_by_port(SD_PORT)
+        if port_pid is not None:
+            target_pid = port_pid
+        elif SD_SERVER_PROCESS is not None:
             target_pid = SD_SERVER_PROCESS.pid
-        
-        # 2. なければポート番号からPIDを探す
-        if target_pid is None:
-            target_pid = get_pid_by_port(SD_PORT)
 
         if target_pid is None:
             return "⚠️ 停止可能なプロセスが見つかりませんでした"
@@ -516,42 +588,52 @@ try:
         
         try:
             if platform.system() == "Windows":
-                # 【修正】subprocess.runを使い、戻り値（成功/失敗）をチェックする
-                # capture_output=True でエラーメッセージを捕まえる
-                # text=True で文字列として扱う
+                # Windowsは taskkill /T でOK
                 res = subprocess.run(
                     ['taskkill', '/F', '/T', '/PID', str(target_pid)], 
-                    capture_output=True, 
-                    text=True
+                    capture_output=True, text=True
                 )
-                
-                # returncode が 0 以外なら失敗
-                if res.returncode != 0:
-                    # エラーメッセージ（「アクセスが拒否されました」など）を取得
-                    err_msg = res.stderr.strip()
-                    if not err_msg: err_msg = "不明なエラー（権限不足の可能性があります）"
-                    
-                    add_log(f"❌ 停止失敗: {err_msg}")
-                    return f"停止失敗: {err_msg}"
-                    
+                if res.returncode != 0 and "見つかりません" not in res.stderr:
+                    add_log(f"❌ 停止失敗: {res.stderr.strip()}")
             else:
-                # Mac/Linux: 権限がないとPermissionErrorが発生してexceptに飛ぶ
-                os.kill(target_pid, 15) # SIGTERM
+                # Mac/Linux: killpgは使わず、個別にKillする
+                
+                # A. まずポートを持っている本人(Python)を殺す
+                try:
+                    os.kill(target_pid, signal.SIGKILL)
+                except OSError: pass
+
+                # B. その親プロセス(webui.sh/bash)も探して殺す（再起動防止）
+                # psコマンドを使ってPPID（親ID）を調べる
+                try:
+                    cmd = f"ps -o ppid= -p {target_pid}"
+                    ppid_str = subprocess.check_output(cmd, shell=True).decode().strip()
+                    if ppid_str:
+                        ppid = int(ppid_str)
+                        # 親がこのツール自身(os.getpid())でない場合のみ殺す
+                        if ppid != os.getpid():
+                            try:
+                                os.kill(ppid, signal.SIGKILL)
+                            except: pass
+                except:
+                    pass
+
+                # C. 念の為、覚えている起動時のPIDも殺す
+                if SD_SERVER_PROCESS is not None and SD_SERVER_PROCESS.pid != target_pid:
+                    try:
+                        os.kill(SD_SERVER_PROCESS.pid, signal.SIGKILL)
+                    except: pass
             
-            # ここまで来たら成功
+            # 完了確認
+            time.sleep(1)
+            if get_pid_by_port(SD_PORT) is not None:
+                 return "❌ 停止失敗: プロセスが復活しました（ゾンビ化）"
+
             SD_SERVER_PROCESS = None
             STARTING = False
             add_log("✅ サーバーを停止しました")
             return "停止しました"
 
-        except PermissionError:
-            add_log("❌ 停止失敗: 権限がありません（管理者として実行する必要があります）")
-            return "停止失敗: 権限不足"
-        except ProcessLookupError:
-            add_log("⚠️ プロセスは既に存在しません")
-            SD_SERVER_PROCESS = None
-            STARTING = False
-            return "既に停止済み"
         except Exception as e:
             add_log(f"❌ 停止エラー: {e}")
             return f"停止エラー: {e}"
@@ -910,8 +992,8 @@ try:
     .settings-row { display: flex !important; flex-direction: row !important; align-items: center !important; gap: 8px !important; }
     """
 
-    with gr.Blocks(title="FgG ArtAssist", css=custom_css, theme=gr.themes.Soft()) as demo:
-        gr.Markdown("### 🎨 FgG ArtAssist - イラスト制作支援ツール v1.0β")
+    with gr.Blocks(title="gumi ArtAssist", css=custom_css, theme=gr.themes.Soft()) as demo:
+        gr.Markdown("### 🎨 gumi ArtAssist - イラスト制作支援ツール v1.0.1β")
 
         with gr.Column(elem_id="sd_server_frame"):
             btn_settings = gr.Button("⚙️", elem_id="btn_settings")
